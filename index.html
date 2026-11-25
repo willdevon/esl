@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thông tin sản phẩm</title>
+<!--
+  Trang thông tin sản phẩm cho mã QR trên nhãn giá E-ink (Đồ án 2 — BLE Mesh).
+  Đặt file này cùng products.json trong một repo GitHub Public, bật GitHub Pages.
+  QR trên nhãn: https://<tai-khoan>.github.io/<repo>/?SP001   (không có ?mã -> danh sách sản phẩm)
+  products.json xuất từ web gateway: tab "Cập nhật giá" -> "Xuất dữ liệu cho GitHub Pages".
+  Bố cục giống trang /p/<mã> trên gateway (components/esl_gateway_core/web_server.c).
+-->
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f4f6f8;color:#1d2733}
+  .c{max-width:520px;margin:0 auto;padding:16px}
+  .card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 2px 8px rgba(0,0,0,.06);margin-bottom:12px}
+  h1{font-size:22px;margin:0 0 4px}.sku{color:#6b7785;font-size:13px}
+  .price{font-size:28px;font-weight:700;margin-top:10px}
+  .old{text-decoration:line-through;color:#8a95a1;font-size:17px;margin-right:8px}
+  .sale{color:#d32f2f}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #eef1f4}
+  .row:last-child{border:0}.k{color:#6b7785}.v{font-weight:600;text-align:right}
+  .ok{color:#2e7d32}.warn{color:#ef6c00}.bad{color:#d32f2f}.tp{line-height:1.5;white-space:pre-wrap}
+  .f{color:#8a95a1;font-size:12px;text-align:center;margin-top:8px}
+  a.item{display:flex;justify-content:space-between;text-decoration:none;color:inherit;padding:10px 0;border-bottom:1px solid #eef1f4}
+  a.item:last-child{border:0}
+</style>
+</head>
+<body>
+<div class="c" id="app"><div class="card">Đang tải…</div></div>
+<script>
+'use strict';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = v => Number(v).toLocaleString('vi-VN') + 'đ';
+const fmtDate = d => d ? d.split('-').reverse().join('/') : '—';
+const today = () => new Date().toLocaleDateString('sv-SE');           // YYYY-MM-DD theo giờ máy khách
+const days = d => Math.round((Date.parse(d + 'T00:00:00') - Date.parse(today() + 'T00:00:00')) / 86400000);
+
+// Giá KM chỉ áp dụng trong khoảng ngày KM — giống db_effective_sale() trên gateway
+function effectiveSale(p) {
+  if (!p.gia_km) return 0;
+  const t = today();
+  if (p.km_tu && t < p.km_tu) return 0;
+  if (p.km_den && t > p.km_den) return 0;
+  return p.gia_km;
+}
+
+function hsdText(hsd) {
+  if (!hsd) return '—';
+  const n = days(hsd);
+  const st = n < 0 ? `<span class="bad">Đã hết hạn ${-n} ngày</span>`
+           : n === 0 ? '<span class="bad">Hết hạn hôm nay</span>'
+           : n <= 7 ? `<span class="warn">Còn ${n} ngày</span>` : `<span class="ok">Còn ${n} ngày</span>`;
+  return `${fmtDate(hsd)}<br>${st}`;
+}
+
+function productPage(p, data) {
+  const sale = effectiveSale(p);
+  const price = sale ? `<span class="old">${money(p.gia)}</span><span class="sale">${money(sale)}</span>` : money(p.gia);
+  return `
+    <div class="card"><h1>${esc(p.ten_sp)}</h1><div class="sku">Mã sản phẩm: ${esc(p.ma_sp)}</div>
+      <div class="price">${price}</div>
+      ${sale && p.km_den ? `<div class="sku sale">Khuyến mãi đến ${fmtDate(p.km_den)}</div>` : ''}</div>
+    <div class="card">
+      <div class="row"><span class="k">Ngày sản xuất</span><span class="v">${fmtDate(p.nsx)}</span></div>
+      <div class="row"><span class="k">Hạn sử dụng</span><span class="v">${hsdText(p.hsd)}</span></div>
+      <div class="row"><span class="k">Xuất xứ</span><span class="v">${esc(p.xuat_xu || '—')}</span></div></div>
+    <div class="card"><div class="k">Thành phần</div><div class="tp">${esc(p.thanh_phan || 'Chưa có thông tin')}</div></div>
+    <div class="f">${esc(data.store || 'Nhãn giá điện tử ESL')} · cập nhật ${esc(data.updated || '')}</div>`;
+}
+
+function listPage(data) {
+  return `<div class="card"><h1>${esc(data.store || 'Sản phẩm')}</h1><div class="sku">${data.products.length} sản phẩm · cập nhật ${esc(data.updated || '')}</div></div>
+    <div class="card">${data.products.map(p => `<a class="item" href="?${encodeURIComponent(p.ma_sp)}"><span>${esc(p.ten_sp)}<br><span class="sku">${esc(p.ma_sp)}</span></span><b>${money(effectiveSale(p) || p.gia)}</b></a>`).join('')}</div>`;
+}
+
+(async () => {
+  const app = document.getElementById('app');
+  // ?SP001 hoặc ?sku=SP001
+  const q = new URLSearchParams(location.search);
+  const sku = (q.get('sku') || [...q.keys()][0] || '').trim().toUpperCase();
+  try {
+    const r = await fetch('products.json', { cache: 'no-cache' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!sku) { app.innerHTML = listPage(data); return; }
+    const p = data.products.find(x => x.ma_sp.toUpperCase() === sku);
+    document.title = p ? p.ten_sp : 'Không tìm thấy sản phẩm';
+    app.innerHTML = p ? productPage(p, data)
+      : `<div class="card"><h1>Không tìm thấy sản phẩm</h1><div class="sku">Mã: ${esc(sku)}</div></div>`;
+  } catch (e) {
+    app.innerHTML = `<div class="card"><h1>Chưa tải được dữ liệu</h1><div class="sku">${esc(e.message)} — kiểm tra file products.json trong repo.</div></div>`;
+  }
+})();
+</script>
+</body>
+</html>
